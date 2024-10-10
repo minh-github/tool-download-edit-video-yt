@@ -1,19 +1,31 @@
-const fs = require('fs')
+const fs = require('fs');
+const fsp = require('fs/promises');
 const path = require('path')
 const { exec } = require('child_process')
 const xlsx = require('xlsx')
 const { SingleBar, Presets } = require('cli-progress');
+const ffmpeg = require('fluent-ffmpeg');
 
 // Đường dẫn đến thư mục chứa video và thư mục đầu ra
 const videoFolder = './video_download' // Thay đổi đường dẫn nếu cần
 const outputFolder = './video_out' // Thư mục đầu ra
 const musicFolder = './settings/background_music' // Thư mục đầu ra
 const backgroundVideoFolder = './settings/background_video' // Thư mục đầu ra
+const tempVideoFolder = './settings/video_temp' // Thư mục đầu ra
 
 // Tạo thư mục đầu ra nếu chưa tồn tại
 const createOutputFolder = () => {
   if (!fs.existsSync(outputFolder)) {
     fs.mkdirSync(outputFolder)
+  }
+  if (!fs.existsSync(tempVideoFolder)) {
+    fs.mkdirSync(tempVideoFolder)
+  }
+  if (!fs.existsSync(musicFolder)) {
+    fs.mkdirSync(musicFolder)
+  }
+  if (!fs.existsSync(backgroundVideoFolder)) {
+    fs.mkdirSync(backgroundVideoFolder)
   }
 }
 
@@ -44,6 +56,7 @@ const readChoicesFromExcel = (excelFilePath) => {
     aspectRatio: row['aspect ratio'] || null,
     direction: row['direction'] || 'horizontal',
     music: row['music'] || 'no',
+    cutEach5s: row['cut 1s each 5s'] || 'no'
   }))[0]; // Trả về hàng đầu tiên như các tùy chọn cho tất cả video
 }
 
@@ -116,19 +129,62 @@ const createFfmpegCommand = (inputPath, outputPath, options) => {
 
 // Thực thi lệnh ffmpeg cho từng tệp video
 const processVideoFile = async (videoFile, options) => {
-  const inputPath = path.join(videoFolder, videoFile).replace(/\\/g, '/')
-  const outputPath = path.join(outputFolder, `edited_${path.parse(videoFile).name}.mp4`).replace(/\\/g, '/') // Đảm bảo tệp đầu ra là MP4
+  const inputPath = path.join(videoFolder, videoFile).replace(/\\/g, '/');
+  const videoTempPath = path.join(tempVideoFolder, videoFile).replace(/\\/g, '/');
+  const outputPath = path.join(outputFolder, `Quizzioe ${path.parse(videoFile).name}.mp4`).replace(/\\/g, '/');
+  let finalVideoInputPath = inputPath
+  
+  if (options.cutEach5s === 'yes') {
+    const cutCommand = `ffmpeg -i "${inputPath}" -filter_complex "[0:v]select='if(gte(t,ld(1)+5),st(1,t)*0,if(ld(1),gt(t,ld(1)+1),1))',setpts=N/(30*TB);[0:a]aselect='if(gte(t,ld(1)+5),st(1,t)*0,if(ld(1),gt(t,ld(1)+1),1))',asetpts=N/SR/TB" "${videoTempPath}"`;
+    await new Promise((resolve, reject) => {
+      exec(cutCommand, (error, stdout, stderr) => {
+        if (error) {
+          return reject(error);
+        }
+        resolve();
+      });
+    });
+    finalVideoInputPath = videoTempPath
+  }
 
-  const ffmpegCommand = createFfmpegCommand(inputPath, outputPath, options)  
-  return new Promise((resolve, reject) => {
+  const ffmpegCommand = createFfmpegCommand(finalVideoInputPath, outputPath, options);
+  
+  await new Promise((resolve, reject) => {
     exec(ffmpegCommand, (error, stdout, stderr) => {
       if (error) {
-        console.error(`Lỗi khi xử lý video ${videoFile}:`, stderr)
-        return reject(error)
+        console.error(`Lỗi khi xử lý video ${videoFile}:`, stderr);
+        return reject(error);
       }
-      resolve()
-    })
-  })
+      resolve();
+    });
+  });
+
+  fs.unlink(videoTempPath, (err) => {
+    if (err) {
+    } else {
+    }
+  });
+};
+
+// Làm trống thư mục temp video
+async function emptyDirectory(directoryPath) {
+  try {
+    const files = await fsp.readdir(directoryPath);
+
+    for (const file of files) {
+      const filePath = path.join(directoryPath, file);
+      const stats = await fsp.stat(filePath);
+
+      if (stats.isDirectory()) {
+        await emptyDirectory(filePath);  // Đệ quy nếu là thư mục
+        await fsp.rmdir(filePath);        // Xóa thư mục sau khi đã làm rỗng
+      } else {
+        await fsp.unlink(filePath);       // Xóa tệp
+      }
+    }
+  } catch (error) {
+    console.error(`Lỗi khi làm rỗng thư mục: ${error.message}`);
+  }
 }
 
 // Lấy danh sách các video trong thư mục
@@ -157,6 +213,7 @@ const getVideoFiles = () => {
 // Quản lý xử lý video từ Excel
 const processVideosFromExcel = async (excelFilePath) => {
   try {
+    emptyDirectory(tempVideoFolder)
     createOutputFolder();
     const videoFiles = await getVideoFiles();
     const options = readChoicesFromExcel(excelFilePath); // Đọc tùy chọn chỉ một lần
@@ -186,5 +243,5 @@ const processVideosFromExcel = async (excelFilePath) => {
 };
 
 // Đường dẫn file Excel và bắt đầu xử lý
-const excelFilePath = './settings/choices.xlsx' // Thay đổi đường dẫn nếu cần
+const excelFilePath = './settings/choices.xlsx'
 processVideosFromExcel(excelFilePath)

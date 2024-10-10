@@ -2,6 +2,7 @@ import sys
 import os
 import scrapetube
 import time
+import backoff
 from pytube import YouTube
 from pytube.innertube import _default_clients
 from pytube import cipher
@@ -31,6 +32,7 @@ elif job_choice == '3':
 else:
     job_type = "DownloadAndEdit"
 
+startEdit = False
 
 if job_type == "DownloadAndEdit" or job_type == "DownloadNoEdit":
     # Nhận URL kênh từ bàn phím
@@ -122,7 +124,8 @@ if job_type == "DownloadAndEdit" or job_type == "DownloadNoEdit":
     def sanitize_filename(filename):
         """Loại bỏ các ký tự đặc biệt khỏi tên file."""
         return re.sub(r'[\\/*?:"<>|]', "", filename)
-
+    
+    @backoff.on_exception(backoff.expo, Exception, max_tries=5)
     def download_video_and_audio(video_id, desired_resolution='1080p'):
         """Tải video và âm thanh từ YouTube, sau đó ghép lại."""
         url = f'https://www.youtube.com/watch?v={video_id}'
@@ -191,13 +194,14 @@ if job_type == "DownloadAndEdit" or job_type == "DownloadNoEdit":
 
                     # print("Đang ghép video và âm thanh lại...")
                     command = f'ffmpeg -hide_banner -loglevel error -i "{video_file}" -i "{audio_file}" -c:v copy -c:a aac "{output_file}"'
+
+
                     result = subprocess.run(command, shell=True)
 
                     if result.returncode != 0:
                         print("Có lỗi xảy ra trong quá trình ghép video và âm thanh.")
                     # else:
-                        # print("Tải video thành công!")
-                    
+                        # print("Tải video thành công!"
                     # Xóa các file video và audio tạm thời
                     os.remove(video_file)
                     os.remove(audio_file)
@@ -218,7 +222,7 @@ if job_type == "DownloadAndEdit" or job_type == "DownloadNoEdit":
         download_video_and_audio(video_id, desired_resolution)
         time.sleep(5)
 
-if job_type == "DownloadAndEdit"  or job_type == "JustEdit":
+if job_type == "JustEdit":
     process = subprocess.Popen(['node', './edit-video/app.js'])
     process.wait()
 
